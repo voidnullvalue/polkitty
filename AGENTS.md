@@ -22,9 +22,19 @@ For a command needing remote `sudo`:
 python3 ./polkitty.py sudo user@example.com -- systemctl status sshd
 ```
 
+Before a task needing several privileged commands, ask the user whether to keep one sudo session open for the task or use separate authentication for each command. Explain that a session keeps a privileged shell available until it exits or times out; use it only for the agreed host and task. If the user chooses separate authentication, use `sudo` mode for each command. Do not start a session without that choice.
+
+For an agreed session, start the wrapper in an interactive local process and send reviewed commands to its standard input:
+
+```bash
+python3 ./polkitty.py session --idle-timeout 300 user@example.com
+```
+
+Close the session with `exit` or end of input when the task is done. The idle timeout counts time since the last command input, including time spent running a long command. Session commands run in one remote `sh` under sudo, with no remote TTY. Avoid commands that read standard input; they can consume later shell commands. Report each command's status explicitly, for example by sending `printf 'exit=%s\n' "$?"` immediately after it. If a session ends unexpectedly, ask before opening another privileged session.
+
 Pass the remote program and each argument separately after `--`. The wrapper quotes them for the remote shell. Avoid wrapping the command in `sh -c` unless shell behavior is specifically needed and its text has been reviewed. A successful exit code is `0`; otherwise inspect the error or remote command output without exposing secrets.
 
-SSH login and remote `sudo` may each produce a separate desktop prompt. The sudo prompt appears first. The wrapper uses `ssh -T` and `sudo -S`, so the remote host must allow sudo without a TTY. The remote command gets end of input after the sudo password; use this wrapper for commands that do not need interactive input.
+SSH login and remote `sudo` may each produce a separate desktop prompt. A noninteractive sudo validation runs first; a sudo dialog appears only if that validation fails. The wrapper uses `ssh -T` and `sudo -S`, so the remote host must allow sudo without a TTY. In single-command `sudo` mode, the remote command gets end of input after the password; use it for commands that do not need interactive input.
 
 ## Secret handling
 
