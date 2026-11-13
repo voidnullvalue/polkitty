@@ -13,9 +13,9 @@ import time
 
 
 ASKPASS_CANDIDATES = (
-    "/usr/libexec/gcr4-ssh-askpass",
     "/usr/lib/ssh/ssh-askpass",
     "/usr/bin/ssh-askpass",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "gtk-askpass.py"),
 )
 
 

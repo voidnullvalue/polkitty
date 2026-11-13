@@ -6,7 +6,7 @@ Use `polkitty.py` when an authorized task needs an SSH login or a command with `
 
 1. Identify the exact destination (`user@host`) and remote command from the user's request. If the destination or requested action is unclear, clarify it before connecting.
 2. Use a host whose SSH key is already trusted in `~/.ssh/known_hosts`. The wrapper rejects unknown and changed host keys. If trust must be established, have the user verify the host fingerprint through a trusted channel before accepting it; do not bypass host key checking.
-3. Check that this process has a graphical session (`DISPLAY` or `WAYLAND_DISPLAY`) and that the user can respond to its desktop dialog. The default askpass helper is `/usr/libexec/gcr4-ssh-askpass` on this machine.
+3. Check that this process has a graphical session (`DISPLAY` or `WAYLAND_DISPLAY`) and that the user can respond to its desktop dialog. The bundled GTK askpass helper is used when a standalone system askpass is unavailable.
 
 ## Invoke
 
