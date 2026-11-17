@@ -1,46 +1,31 @@
 # Agent guide: polkitty
 
-Use `polkitty.py` when an authorized task needs an SSH login or a command with `sudo` on a remote host. Run it from this directory. The user enters passwords in a desktop dialog; never ask for a password in chat or put one in a shell command, environment variable, file, or tool input.
+Use `polkitty.py` for authorized SSH access. Never ask for or transmit passwords in chat, command arguments, environment variables, or files. The local GTK askpass dialog owns authentication.
 
-## Before running a command
+## Default: one sudo authentication per job
 
-1. Identify the exact destination (`user@host`) and remote command from the user's request. If the destination or requested action is unclear, clarify it before connecting.
-2. Use a host whose SSH key is already trusted in `~/.ssh/known_hosts`. The wrapper rejects unknown and changed host keys. If trust must be established, have the user verify the host fingerprint through a trusted channel before accepting it; do not bypass host key checking.
-3. Check that this process has a graphical session (`DISPLAY` or `WAYLAND_DISPLAY`) and that the user can respond to its desktop dialog. The bundled GTK askpass helper is used when a standalone system askpass is unavailable.
+The user explicitly prefers **persistent job-scoped sudo sessions**. Do **not** ask whether to use the session for each job.
 
-## Invoke
-
-For a normal remote command:
-
-```bash
-python3 ./polkitty.py ssh user@example.com -- id
-```
-
-For a command needing remote `sudo`:
+1. Identify the authorized remote `user@host` and task. Assign a new unique job ID for that job; do not reuse IDs between unrelated tasks.
+2. For **privileged** commands, call `run --job JOB host -- command ...` with the same job and host each time. The first call authenticates and opens one root shell; subsequent independent invocations reuse it without new authentication.
+3. Use `ssh host -- command ...` when the command doesn't require privilege.
+4. Review each command and inspect its output and actual exit status. The persistent shell remains available, but each command receives closed stdin and is isolated by a child `sh`.
+5. **Always** call `close --job JOB host` when the job ends, succeeds, fails, or is abandoned. Idle timeout is a fallback only.
 
 ```bash
-python3 ./polkitty.py sudo user@example.com -- systemctl status sshd
+python3 ./polkitty.py run --job repair-speaker-20261117 --idle-timeout 1800 void@192.168.88.236 -- id
+python3 ./polkitty.py run --job repair-speaker-20261117 void@192.168.88.236 -- systemctl status sshd
+python3 ./polkitty.py close --job repair-speaker-20261117 void@192.168.88.236
 ```
 
-Before a task needing several privileged commands, ask the user whether to keep one sudo session open for the task or use separate authentication for each command. Explain that a session keeps a privileged shell available until it exits or times out; use it only for the agreed host and task. If the user chooses separate authentication, use `sudo` mode for each command. Do not start a session without that choice.
+SSH and remote sudo are separate authentication layers, so the initial call may prompt once for SSH and once for sudo. Do not restart closed/expired sessions silently if reauthentication is unexpected. The default idle timeout is 1800 seconds *between completed commands*, not during a running command. Remote commands do not get a TTY or stdin. `run` preserves each command's exit status but does not preserve child-process shell state like `cd`.
 
-For an agreed session, start the wrapper in an interactive local process and send reviewed commands to its standard input:
+## Security
 
-```bash
-python3 ./polkitty.py session --idle-timeout 300 user@example.com
-```
+- Require a previously verified SSH host key. Never disable `StrictHostKeyChecking` or bypass changed/unknown key warnings.
+- Never capture, log, read, store, or print the askpass secret; do not use `sshpass`, password files, or environment variables containing credentials.
+- Never change sudoers or turn on blanket passwordless sudo.
+- The local job socket is user-owned and intended solely for the authorized job. Never pass its path to another user or keep it open after completion.
+- Don't run commands that expose secrets in remote stdout or stderr.
 
-Close the session with `exit` or end of input when the task is done. The idle timeout counts time since the last command input, including time spent running a long command. Session commands run in one remote `sh` under sudo, with no remote TTY. Avoid commands that read standard input; they can consume later shell commands. Report each command's status explicitly, for example by sending `printf 'exit=%s\n' "$?"` immediately after it. If a session ends unexpectedly, ask before opening another privileged session.
-
-Pass the remote program and each argument separately after `--`. The wrapper quotes them for the remote shell. Avoid wrapping the command in `sh -c` unless shell behavior is specifically needed and its text has been reviewed. A successful exit code is `0`; otherwise inspect the error or remote command output without exposing secrets.
-
-SSH login and remote `sudo` may each produce a separate desktop prompt. A noninteractive sudo validation runs first; a sudo dialog appears only if that validation fails. The wrapper uses `ssh -T` and `sudo -S`, so the remote host must allow sudo without a TTY. In single-command `sudo` mode, the remote command gets end of input after the password; use it for commands that do not need interactive input.
-
-## Secret handling
-
-- Do not read, print, capture, log, or inspect the askpass output or its pipe. Do not replace the helper with a command that records input.
-- Do not use `sshpass`, `echo PASSWORD | sudo`, `sudo -A` with a password-bearing environment variable, or shell history to pass a secret.
-- Treat remote command output as visible to the agent. Do not run commands that print passwords, tokens, private keys, or other secrets.
-- Never turn off `StrictHostKeyChecking` to make a connection succeed. Report an unknown or changed host key and let the user verify it.
-
-For setup details and the limits of this mechanism, see [README.md](README.md).
+Legacy `sudo` is an isolated one-off command. Legacy `session` is a raw stdin shell; it cannot be reused by separate CLI invocations. Prefer `run` for multi-command agent jobs. Read README.md for limitations.
