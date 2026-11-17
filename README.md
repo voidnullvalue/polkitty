@@ -2,22 +2,39 @@
 
 Licensed under the MIT License. See [LICENSE](LICENSE).
 
-`polkitty` runs a command on a trusted SSH host and asks for passwords in a desktop dialog. The password is never passed as a command argument, environment variable, chat message, or file. SSH invokes the graphical askpass helper for login. In `sudo` mode, the helper sends the remote sudo password through an anonymous pipe to SSH's standard input.
+`polkitty` runs authorized commands over SSH and prompts for SSH and sudo passwords through a desktop graphical askpass dialog. It never places passwords in command arguments, environment variables, agent chats, or files.
 
-## Use
+## Usage
 
 ```bash
+# Unprivileged single command
 python3 polkitty.py ssh user@example.com -- id
-python3 polkitty.py sudo user@example.com -- systemctl status sshd
+
+# Preferred: persistent, job-scoped sudo shell shared across separate CLI calls
+python3 polkitty.py run --job maintenance-001 --idle-timeout 1800 user@example.com -- id
+python3 polkitty.py run --job maintenance-001 user@example.com -- systemctl status sshd
+python3 polkitty.py status --job maintenance-001 user@example.com
+python3 polkitty.py close --job maintenance-001 user@example.com
+
+# Deliberately isolated sudo command
+python3 polkitty.py sudo user@example.com -- id
+
+# Legacy stdin-forwarding session (not reusable across calls)
 python3 polkitty.py session --idle-timeout 300 user@example.com
 ```
 
-`session` keeps one remote sudo `sh` running and forwards subsequent local standard input to it. Use it only after agreeing on the host, task, and session choice. Send one reviewed command at a time, check its output and exit status (for example, send `printf 'exit=%s\n' "$?"` after each command), and end with `exit` or end of input. It closes after 300 seconds without command input by default; change this with `--idle-timeout SECONDS`. The timeout also runs while a long remote command is executing. No remote TTY is allocated, and commands that consume standard input can consume later shell input.
+## Persistent sudo sessions
 
-The remote host must already have a trusted SSH host key. The wrapper refuses unknown or changed host keys. Before adding a new key, verify its fingerprint through a trusted channel.
+`run` starts a local, detached manager for each unique host/job pair. Its Unix-domain socket lives in a private user-owned directory (mode 0700), and requests require the same local user ID. The manager opens **one SSH connection**, validates sudo policy within that connection, asks for the remote sudo password only if needed, then keeps one authenticated remote `sh` alive. Separate `run` invocations with the same job ID and host reuse it; each command runs in a child shell with `/dev/null` stdin and an individually reported exit status.
 
-The desktop prompt uses a standalone system SSH askpass if available, or the bundled `gtk-askpass.py`, which requires system Python 3, PyGObject and GTK 3. The gcr4 SSH helper is not a standalone askpass and requires a socket supplied by its agent, so it is not selected directly. To use another graphical helper, set `POLKITTY_ASKPASS` to its absolute executable path. A helper must accept the prompt as its first argument and write the answer followed by a newline to standard output. A desktop session with `DISPLAY` or `WAYLAND_DISPLAY` is required.
+The daemon exits on `close` or after an idle timeout (default 1800 seconds) **between completed commands**. A running command is not interrupted by this timeout. Closing the job closes the privileged shell. Give independent tasks different job IDs, always close when done, and never treat a session as a general-purpose permanently privileged daemon.
 
-`sudo` and `session` modes first try `sudo -n -v` on the remote host. If that succeeds, they run without a sudo password dialog. If it fails because authentication is needed, the helper asks for the password; an unreachable host fails before that dialog. Validation may still fail under command-specific sudo policy, so a dialog is possible even for a passwordless command. The preflight opens a separate SSH connection, which may cause an extra SSH login prompt. The remote host must allow sudo without a TTY (`requiretty` must be off). Single-command `sudo` mode gives the remote command end of input after the password. For routine access, SSH keys and narrowly scoped passwordless sudo are preferable where policy permits.
+**Limits:** SSH authentication and sudo authentication are distinct, so the first call may show up to two dialogs. Remote commands cannot interact with a TTY or read stdin. Each command runs in its own child shell, so `cd` and exported variables don't persist across commands. A lost local daemon, expired job, system restart, changed SSH credentials, or broken connection may require reauthentication; no persistent credentials are stored.
 
-The secret exists briefly in the askpass process, SSH process, remote SSH server, and kernel pipe. The wrapper does not store it. As with any remote command, its output is visible to Codex; do not run commands that print secrets. The host and command still appear in process arguments and tool history.
+## Security
+
+Strict SSH host-key checking is mandatory; unknown and changed host keys are rejected. Verify fingerprints out of band before establishing trust. The graphical askpass helper is selected from `POLKITTY_ASKPASS`, a supported system askpass, or bundled `gtk-askpass.py` (requires GTK 3/PyGObject), and needs `DISPLAY` or `WAYLAND_DISPLAY`. The sudo secret flows from the helper to the SSH process through an anonymous pipe, using Linux `splice`; Python does not read the credential bytes.
+
+The remote host must permit non-TTY sudo (no `requiretty`). Commands and hostnames are visible in process arguments, and command output is visible to the invoking agent. Do not output secrets. The socket is local and only intended for the same authenticated Unix user; local processes running as that user can operate the privileged shell until it is closed. This is why job scoping, idle timeout, and explicit close are essential.
+
+Single-command `sudo` and legacy `session` remain available for compatibility. Legacy `sudo` may still establish a separate SSH preflight connection, and legacy `session` uses raw forwarded stdin rather than framed commands.
