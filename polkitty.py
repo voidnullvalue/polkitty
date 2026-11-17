@@ -221,6 +221,15 @@ def run(args):
     else:
         command = remote_command(args.command, True)
 
+    if args.mode == "sudo":
+        process, pending = job_bootstrap(ssh, helper, args.host, env)
+        try:
+            return report_exit("sudo command", job_command(
+                process, pending, args.command,
+                lambda data: os.write(sys.stdout.fileno(), data)))
+        finally:
+            job_close_shell(process)
+
     passwordless = sudo_preflight(ssh, args.host, env)
     if passwordless:
         command = command.replace("sudo -S -p ''", "sudo -n", 1)
