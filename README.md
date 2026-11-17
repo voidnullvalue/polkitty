@@ -37,4 +37,4 @@ Strict SSH host-key checking is mandatory; unknown and changed host keys are rej
 
 The remote host must permit non-TTY sudo (no `requiretty`). Commands and hostnames are visible in process arguments, and command output is visible to the invoking agent. Do not output secrets. The socket is local and only intended for the same authenticated Unix user; local processes running as that user can operate the privileged shell until it is closed. This is why job scoping, idle timeout, and explicit close are essential.
 
-Single-command `sudo` and legacy `session` remain available for compatibility. Legacy `sudo` may still establish a separate SSH preflight connection, and legacy `session` uses raw forwarded stdin rather than framed commands.
+Single-command `sudo` and legacy `session` remain available for compatibility. Single-command `sudo` now validates and authenticates within one SSH connection; legacy `session` retains its separate preflight connection and raw forwarded stdin rather than framed commands.
