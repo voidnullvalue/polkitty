@@ -316,7 +316,7 @@ def job_bootstrap(ssh, helper, host, env):
     )
     proc = subprocess.Popen(ssh_command(ssh, host, "sh -c " + shlex.quote(script)),
                             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, env=env)
+                            stderr=None, env=env)
     pending = bytearray()
     deadline = time.monotonic() + 120
 
@@ -334,22 +334,33 @@ def job_bootstrap(ssh, helper, host, env):
             if ready_fds:
                 part = os.read(proc.stdout.fileno(), 4096)
                 if not part:
+                    code = proc.poll()
+                    if code == 255:
+                        raise ValueError("SSH connection failed (exit 255)")
                     raise ValueError("SSH/sudo disconnected before privileged shell started")
                 pending.extend(part)
                 if len(pending) > MAX_FRAME:
                     raise ValueError("Excessive bootstrap output")
+    def expect(*markers):
+        expected = {marker.encode() for marker in markers}
+        protocol_prefix = b"POLKITTY_"
+        while time.monotonic() < deadline:
+            response = line()
+            if response in expected:
+                return response
+            if response.startswith(protocol_prefix):
+                raise ValueError("Unexpected SSH/sudo bootstrap marker")
+            # Shell startup messages and banners are not protocol frames.
+        raise ValueError("Timed out waiting for SSH/sudo authentication")
+
     try:
-        if line() != connect.encode():
-            raise ValueError("SSH failed (verify connectivity and trusted host key)")
-        response = line()
+        expect(connect)
+        response = expect(password, no_pass)
         if response == password.encode():
             with sudo_password_pipe(helper, host, env) as password_pipe:
                 while os.splice(password_pipe.fileno(), proc.stdin.fileno(), 4096):
                     pass
-        elif response != no_pass.encode():
-            raise ValueError("Unexpected sudo authentication response")
-        if line() != ready.encode():
-            raise ValueError("Sudo authentication failed")
+        expect(ready)
         return proc, pending
     except (OSError, ValueError):
         proc.terminate()
